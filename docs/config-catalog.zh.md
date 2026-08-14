@@ -542,12 +542,14 @@ export interface ToolResultPruneConfig {
 ```ts config-catalog
 /** Runner configuration. */
 export interface Config {
-  /** Maximum synchronous VM evaluation time in milliseconds. */
+  /** Experimental Host evaluator; `ses` runs process-global lockdown on its first activation. */
+  experimentalHostEvaluator?: 'vm' | 'ses'
+  /** Maximum synchronous VM evaluation time in milliseconds; ignored by the SES evaluator. */
   vmTimeoutMs?: number
 }
 ```
 
-来源：[`packages/extensions/cordis-host-runner/src/index.ts:88`](../packages/extensions/cordis-host-runner/src/index.ts)
+来源：[`packages/extensions/cordis-host-runner/src/index.ts:89`](../packages/extensions/cordis-host-runner/src/index.ts)
 
 <a id="deepseek-aidsh-credentials-local"></a>
 

@@ -67,6 +67,8 @@ minimumReleaseAgeExclude:
   - node-addon-require-builtin-win32-ia32-msvc@0.1.4
   - node-addon-require-builtin-win32-x64-msvc@0.1.4
   - node-addon-require-builtin@0.1.4
+  - '@endo/immutable-arraybuffer@2.0.0'
+  - ses@2.3.0
 
 patchedDependencies:
   node-pty@1.1.0: patches/node-pty@1.1.0.patch

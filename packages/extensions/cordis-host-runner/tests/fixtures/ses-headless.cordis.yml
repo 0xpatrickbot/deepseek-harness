@@ -1,0 +1,16 @@
+- id: agent-default-model
+  config:
+    provider: ses-headless
+    model: ses-headless
+
+- insert:
+    - id: ses-headless-mock-llm
+      name: './ses-fixtures/ses-headless-mock-llm.ts'
+
+    - id: cordis-host-runner
+      name: '@deepseek-ai/dsh-cordis-host-runner'
+      config:
+        experimentalHostEvaluator: ses
+
+    - id: tool-cordis
+      name: '@deepseek-ai/dsh-tool-cordis'

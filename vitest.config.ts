@@ -170,6 +170,9 @@ export default defineConfig({
         'packages/*/*/src/types.ts',
         'packages/*/*/src/bin.ts',
         'packages/*/*/src/worker.ts',
+        // SES lockdown is process-global, so subprocess integration tests own this evaluator;
+        // Vitest's V8 provider cannot merge coverage from the spawned process.
+        'packages/extensions/cordis-host-runner/src/ses-sandbox.ts',
         // Dynamic Host/Client composition is covered by its focused lifecycle
         // tests and assembled application checks rather than per-file coverage.
         'packages/self-modification/*/src/**/*.{ts,tsx}',

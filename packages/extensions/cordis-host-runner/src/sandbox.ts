@@ -47,8 +47,10 @@ export const HOST_BUILTIN_INSPECTION = [
  * id. Write-through (host stdout/stderr), NOT buffered into the tool result:
  * a registered listener fires long after the run call returned, and its output
  * must land somewhere the user can see — for a terminal entry point, the host terminal.
+ * @param id - package identity prefixed to every line.
+ * @returns the console methods endowed to evaluated Host code.
  */
-function taggedConsole(id: string): Record<'log' | 'info' | 'warn' | 'error' | 'debug', (...args: unknown[]) => void> {
+export function taggedConsole(id: string): Record<'log' | 'info' | 'warn' | 'error' | 'debug', (...args: unknown[]) => void> {
   const tag = `[cordis:${id}]`
   const log = (...args: unknown[]): void => { console.log(tag, ...args) }
   const error = (...args: unknown[]): void => { console.error(tag, ...args) }

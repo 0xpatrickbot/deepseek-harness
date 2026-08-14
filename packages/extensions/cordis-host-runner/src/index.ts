@@ -22,6 +22,7 @@ import type {
   DynamicCordisReference, DynamicCordisRun,
 } from './registry.ts'
 import { createSandbox, evaluateHostCode, precheckCode } from './sandbox.ts'
+import { evaluateSesHostCode, hardenSesPlugin } from './ses-sandbox.ts'
 import type {
   ApprovalRequestId, CordisDynamicPackageId, CordisDynamicPluginId, CordisDynamicPluginRunId, CordisErrorDetails,
   CordisDynamicRunMode, CordisInspectProviderManifest, CordisInspectQueryResolution,
@@ -86,7 +87,9 @@ declare module '@deepseek-ai/cordis' {
 
 /** Runner configuration. */
 export interface Config {
-  /** Maximum synchronous VM evaluation time in milliseconds. */
+  /** Experimental Host evaluator; `ses` runs process-global lockdown on its first activation. */
+  experimentalHostEvaluator?: 'vm' | 'ses'
+  /** Maximum synchronous VM evaluation time in milliseconds; ignored by the SES evaluator. */
   vmTimeoutMs?: number
 }
 
@@ -125,6 +128,7 @@ export class DynamicCordisRunnerService extends TypertRemoteService {
   static inject = ['tools']
 
   static Config: z<Config> = z.object({
+    experimentalHostEvaluator: z.union(['vm', 'ses'] as const).default('vm').experimental(),
     vmTimeoutMs: z.number().min(1).default(5000),
   })
 
@@ -895,16 +899,26 @@ export class DynamicCordisRunnerService extends TypertRemoteService {
       return dispose
     }
     try {
-      const sandbox = createSandbox(plugin.pluginId, { handle })
-      const evaluated = await evaluateHostCode(sandbox, hostCode, plugin.pluginId, this.resolved.vmTimeoutMs)
+      /* v8 ignore start -- real SES evaluation runs in an isolated subprocess because lockdown is process-global. */
+      const evaluated = this.resolved.experimentalHostEvaluator === 'ses'
+        ? await evaluateSesHostCode(hostCode, run.packageId, { handle })
+        : await evaluateHostCode(
+          createSandbox(plugin.pluginId, { handle }),
+          hostCode,
+          plugin.pluginId,
+          this.resolved.vmTimeoutMs,
+        )
+      /* v8 ignore stop */
       if (!isPlugin(evaluated)) {
         throw new Error(evaluated === undefined
           ? 'the Host half returned `undefined` — did you forget `return`?'
           : 'the Host half must return a Plugin function or an object with apply(ctx)')
       }
+      /* v8 ignore next -- the SES hardening branch runs in the same isolated subprocess as evaluation. */
+      const runnable = this.resolved.experimentalHostEvaluator === 'ses' ? hardenSesPlugin(evaluated) : evaluated
       run.fiber = await startHostHalf(
         this.requireGroup(),
-        evaluated,
+        runnable,
         (error) => { this.steerGuardFailure(plugin, run, 'Host', errorDetails(error)) },
       )
       return undefined

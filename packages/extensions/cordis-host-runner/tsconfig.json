@@ -39,6 +39,9 @@
       "path": "../../llm/llm"
     },
     {
+      "path": "../../test-support/loader-smoke"
+    },
+    {
       "path": "../../runtime-diagnostics/invariants"
     },
     {
