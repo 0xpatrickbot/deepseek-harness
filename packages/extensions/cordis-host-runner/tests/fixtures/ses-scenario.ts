@@ -52,6 +52,14 @@ async function securityScenario(): Promise<void> {
   const harness = await setup({ experimentalHostEvaluator: 'ses' })
   try {
     const first = await mount(harness, `
+      const captureFailure = (callback) => {
+        try {
+          callback()
+          return 'returned'
+        } catch (error) {
+          return error.name + ': ' + error.message
+        }
+      }
       const dynamicType = Function('globalThis.__fromFunction = 17; return typeof process')()
       const indirectType = (0, eval)('globalThis.__fromEval = 23; typeof Buffer')
       let objectConstructorEscape
@@ -97,6 +105,16 @@ async function securityScenario(): Promise<void> {
         dynamicGlobal: globalThis.__fromFunction,
         indirectGlobal: globalThis.__fromEval,
         functionGlobalIsHost: Function('return this')() === globalThis,
+        secureMode: {
+          dateNow: captureFailure(() => Date.now()),
+          dateConstructor: captureFailure(() => new Date()),
+          mathRandom: captureFailure(() => Math.random()),
+        },
+        absentCalls: {
+          require: captureFailure(() => require('node:fs')),
+          fetch: captureFailure(() => fetch('https://example.com')),
+          setTimeout: captureFailure(() => setTimeout(() => {}, 1)),
+        },
         objectConstructorEscape,
         endowedConstructorEscape,
         intrinsicMutation,
@@ -107,6 +125,9 @@ async function securityScenario(): Promise<void> {
           harness: Object.isFrozen(harness),
           console: Object.isFrozen(console),
           textEncoder: Object.isFrozen(TextEncoder),
+          textEncoderPrototype: Object.isFrozen(TextEncoder.prototype),
+          textDecoder: Object.isFrozen(TextDecoder),
+          textDecoderPrototype: Object.isFrozen(TextDecoder.prototype),
         },
       }))
       return plugin
@@ -129,13 +150,36 @@ async function securityScenario(): Promise<void> {
         dynamicGlobal: 17,
         indirectGlobal: 23,
         functionGlobalIsHost: false,
+        secureMode: {
+          dateNow: 'TypeError: secure mode Calling %SharedDate%.now() throws',
+          dateConstructor: 'TypeError: secure mode Calling new %SharedDate%() with no arguments throws',
+          mathRandom: 'TypeError: secure mode %SharedMath%.random() throws',
+        },
+        absentCalls: {
+          require: 'TypeError: require is not a function',
+          fetch: 'TypeError: fetch is not a function',
+          setTimeout: 'TypeError: setTimeout is not a function',
+        },
         objectConstructorEscape: 'TypeError: Function.prototype.constructor is not a valid constructor.',
         endowedConstructorEscape: 'TypeError: Function.prototype.constructor is not a valid constructor.',
         intrinsicMutation: 'TypeError',
         endowmentMutation: 'TypeError',
-        frozen: { plugin: true, apply: true, harness: true, console: true, textEncoder: true },
+        frozen: {
+          plugin: true,
+          apply: true,
+          harness: true,
+          console: true,
+          textEncoder: true,
+          textEncoderPrototype: true,
+          textDecoder: true,
+          textDecoderPrototype: true,
+        },
       },
     })
+    assert.equal(Object.isFrozen(TextEncoder), true)
+    assert.equal(Object.isFrozen(TextEncoder.prototype), true)
+    assert.equal(Object.isFrozen(TextDecoder), true)
+    assert.equal(Object.isFrozen(TextDecoder.prototype), true)
 
     const second = await mount(harness, `
       harness.handle('isolation', () => ({
@@ -353,6 +397,52 @@ async function failureScenario(): Promise<void> {
       purpose: 'syntax diagnostic fixture',
       code: { host: "const value: string = 'syntax'; return { name: value, apply(ctx) {} }" },
     }), /failed to parse:[\s\S]*SyntaxError:[\s\S]*BODY of an async function/)
+
+    const censoredSources = [
+      {
+        prefix: 'imprt',
+        code: "await import('node:fs'); return (ctx) => {}",
+        raw: /Possible import expression rejected[\s\S]*SES_IMPORT_REJECTED/,
+        action: /does not support module loading[\s\S]*including strings and comments/,
+      },
+      {
+        prefix: 'strimp',
+        code: "const sample = \"import('node:fs')\"; return { name: sample, apply(ctx) {} }",
+        raw: /Possible import expression rejected[\s\S]*SES_IMPORT_REJECTED/,
+        action: /does not support module loading[\s\S]*including strings and comments/,
+      },
+      {
+        prefix: 'htmla',
+        code: "const sample = '<!--'; return { name: sample, apply(ctx) {} }",
+        raw: /Possible HTML comment rejected[\s\S]*SES_HTML_COMMENT_REJECTED/,
+        action: /HTML-comment tokens anywhere[\s\S]*including strings and comments/,
+      },
+      {
+        prefix: 'htmlb',
+        code: "const sample = '-->'; return { name: sample, apply(ctx) {} }",
+        raw: /Possible HTML comment rejected[\s\S]*SES_HTML_COMMENT_REJECTED/,
+        action: /HTML-comment tokens anywhere[\s\S]*including strings and comments/,
+      },
+    ]
+    for (const expected of censoredSources) {
+      const rejection = await failedRun(harness, expected.code, expected.prefix)
+      assert.match(rejection.message, /passed the define-time JavaScript syntax check but SES rejected it during activation/)
+      assert.match(rejection.message, expected.raw)
+      assert.match(rejection.message, expected.action)
+      assert.match(rejection.message, /cordis-dyn-pkg-\d+\.js/)
+    }
+  } finally {
+    await harness.ctx.fiber.dispose()
+  }
+}
+
+async function identityScenario(): Promise<void> {
+  const harness = await setup({ experimentalHostEvaluator: 'ses' })
+  try {
+    await mount(harness, `
+      console.log('SES_IDENTITY_TAG')
+      return (ctx) => {}
+    `)
   } finally {
     await harness.ctx.fiber.dispose()
   }
@@ -362,6 +452,7 @@ const scenarios: Record<string, () => Promise<void>> = {
   security: securityScenario,
   compatibility: compatibilityScenario,
   failure: failureScenario,
+  identity: identityScenario,
 }
 
 const scenario = scenarios[process.argv[2] ?? '']

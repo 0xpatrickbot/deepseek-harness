@@ -901,7 +901,7 @@ export class DynamicCordisRunnerService extends TypertRemoteService {
     try {
       /* v8 ignore start -- real SES evaluation runs in an isolated subprocess because lockdown is process-global. */
       const evaluated = this.resolved.experimentalHostEvaluator === 'ses'
-        ? await evaluateSesHostCode(hostCode, run.packageId, { handle })
+        ? await evaluateSesHostCode(hostCode, run.packageId, plugin.pluginId, { handle })
         : await evaluateHostCode(
           createSandbox(plugin.pluginId, { handle }),
           hostCode,

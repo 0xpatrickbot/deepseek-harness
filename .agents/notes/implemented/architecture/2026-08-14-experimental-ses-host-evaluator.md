@@ -14,7 +14,9 @@ The experiment needs a comparable evaluator without changing Cordis core, the dy
 
 `@deepseek-ai/dsh-cordis-host-runner` has an experimental `experimentalHostEvaluator: "ses"` setting alongside the default `"vm"`. The SES module is imported and `lockdown()` runs once immediately before the first SES component is evaluated. Selecting `vm` does not initialize SES.
 
-Each SES Package evaluation receives a fresh named `Compartment`. Its only Host endowments are a package-tagged console, `harness.defineTool`, `harness.registerTool`, `harness.handle`, `btoa`, `atob`, `TextEncoder`, and `TextDecoder`; the complete endowment graph is hardened before evaluation. The evaluator runs the existing async-function-body wrapper and does not add module imports or a loader.
+Each SES Package evaluation receives a fresh named `Compartment`. Its only Host endowments are a Plugin-tagged console, `harness.defineTool`, `harness.registerTool`, `harness.handle`, `btoa`, `atob`, `TextEncoder`, and `TextDecoder`; the complete endowment graph is hardened before evaluation. The evaluator runs the existing async-function-body wrapper and does not add module imports or a loader.
+
+The Compartment name and source URL use the Package id so evaluation diagnostics distinguish revisions. The tagged console uses the stable Plugin id, matching the VM evaluator across updates and evaluator selection.
 
 The Host runner applies its existing function-or-object Plugin validation to the Compartment result and then hardens the validated Plugin surface. The Plugin enters the existing Context Guard and `cordis-dynamic` fiber, so dependency parking and reactivation, Tool and handler ownership, timers, effects, activation rollback, stop, and undefine retain one lifecycle implementation.
 
@@ -22,9 +24,9 @@ SES restricts ambient reachability only for source evaluated through this path. 
 
 ## Verification
 
-Isolated subprocess cases run after process-global lockdown and verify absent non-endowed Host globals, blocked function-constructor and prototype-constructor escapes, frozen shared intrinsics and endowments, distinct Compartment globals, and Compartment-local dynamic functions and indirect evaluation. The same cases verify the direct foreign-Context return rejection and that evaluation or activation failure leaves no active Run, Tool, handler, timer, or effect.
+Isolated subprocess cases run after process-global lockdown and verify absent non-endowed Host globals, blocked function-constructor and prototype-constructor escapes, frozen shared intrinsics and endowments, distinct Compartment globals, and Compartment-local dynamic functions and indirect evaluation. They pin the stable Plugin console tag and Package-specific source identity. The same cases verify the direct foreign-Context return rejection and that evaluation or activation failure leaves no active Run, Tool, handler, timer, or effect.
 
-Compatibility cases cover object-form and function-form Plugins, dependency parking and reactivation, Tool and Host handler registration and disposal, timer and effect cleanup, supported cross-realm JSON and encoding data, and actionable evaluation, syntax, and activation messages. A keyless assembled `dsh --profile headless` process defines, activates, calls, and stops one SES Host Package. This assembled profile completes after lockdown, so the experiment does not require a Cordis callback compatibility layer.
+Compatibility cases cover object-form and function-form Plugins, dependency parking and reactivation, Tool and Host handler registration and disposal, timer and effect cleanup, supported cross-realm JSON and encoding data, and actionable evaluation, syntax, and activation messages. They also pin SES 2.3.0 source censoring, secure-mode Date and Math failures, and the absence of VM teaching redirects. The build-dependent artifact lane runs a keyless assembled `dsh --profile headless` process that defines, activates, calls, and stops one SES Host Package. This assembled profile completes after lockdown, so the experiment does not require a Cordis callback compatibility layer.
 
 The emitted Host runner JavaScript grows from 126,601 to 129,812 bytes and its declarations grow from 53,278 to 55,373 bytes. The exact `ses@2.3.0` npm artifact is 1,128,009 compressed bytes and 4,717,114 unpacked bytes; its three transitive runtime dependencies remain external package files. SES and its runtime closure use Apache-2.0 and are included in the generated third-party notices.
 
@@ -38,9 +40,17 @@ The emitted Host runner JavaScript grows from 126,601 to 129,812 bytes and its d
 
 **Add dynamic module imports.** Package source remains an async JavaScript function body with no import hook. Module loading would expand authority and require a separate resolution and policy design.
 
+**Use Package identity for every SES diagnostic.** Revision-specific Compartment and source identities are useful for evaluation failures, but Package-tagged console output would differ from the VM path and change on every update. The console therefore uses the Plugin id while Compartment and source identities retain the Package id.
+
 ## Consequences
 
 SES lockdown is process-global and irreversible. Deployments selecting the experimental evaluator must test every Plugin and dependency loaded in that process; the repository keeps SES integration in isolated subprocesses so ordinary tests are not order-dependent.
+
+Hardening the endowment graph freezes the Host `TextEncoder` and `TextDecoder` constructors and prototypes process-wide. The cached lockdown promise also preserves a rejection because a failed lockdown may have partially mutated the process; retrying cannot recover a known pre-lockdown state.
+
+The define-time VM compilation rejects invalid JavaScript syntax before an id exists. SES 2.3.0 then conservatively scans raw Host source during activation and rejects apparent `import(...)` expressions and HTML-comment tokens even inside strings or comments. The Host evaluator preserves the SES error code and source location, names the later activation check, and tells the author which token to remove; it does not add a parser, source rewrite, or module loader.
+
+SES shared intrinsics make `Date.now()`, `new Date()`, and `Math.random()` throw secure-mode `TypeError`s. Non-endowed `require`, `fetch`, and timer globals are also absent instead of using the VM evaluator's teaching redirects. These measured differences remain limitations rather than new endowments or a compatibility layer.
 
 SES error taming preserves error messages but can omit or redact stacks. The existing `node:vm` syntax precheck remains actionable after lockdown, although a TypeScript-specific hint can fall back to the generic async-function-body and bracket-balance diagnostic when the tamed stack omits the offending source line.
 
