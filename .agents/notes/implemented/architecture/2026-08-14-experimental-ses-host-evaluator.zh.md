@@ -26,6 +26,8 @@ SES 只限制经该路径求值的源码能从环境直接触达的对象。受 
 
 隔离子进程用例在进程全局 lockdown 后运行，并验证未赋予的 Host 全局变量不可用、函数 constructor 与原型 constructor 逃逸被阻止、共享 intrinsic 与 endowment 已冻结、Compartment 全局变量彼此独立，以及动态函数和间接求值留在原 Compartment 中。用例还固定稳定的插件 console 标签和 Package 专属的源码标识。同一组用例还验证直接返回外部 Context 会被拒绝，并且求值或激活失败后不会留下存活的 Run、工具、handler、定时器或 effect。
 
+默认 `vm` 求值器的对照用例在各自的进程中测量同样两次改写尝试，因此两者合起来读作一次对比。vm 求值器两次都接受：写入 Package 自身沙箱 realm 的改动仅停留在该 realm 内；而通过 endowed 函数 constructor 逃逸抵达 Host realm 的改动会在 `stop` 与 `undefine` 之后继续存在，随后可从测试进程、以及仅收到一个普通 Host 数组的后续 Package 中观察到。两个求值器上的参数用例测量出 Host half 会改写调用方传给 `harness.handle` 的对象，因为 SES 加固的是 endowment 与返回的 Plugin，而不是传入的参数。
+
 兼容性用例覆盖对象形式与函数形式插件、依赖挂起与重新激活、工具和 Host handler 的注册与释放、定时器和 effect 清理、受支持的跨 realm JSON 与编码数据，以及可操作的求值、语法和激活错误 message。它们还固定 SES 2.3.0 的源码审查、secure-mode Date 与 Math 失败，以及 VM 教学式重定向的缺失。依赖构建的产物门禁会运行一个无需密钥、完整组装的 `dsh --profile headless` 进程，由它定义、激活、调用并停止一个 SES Host Package。该完整 profile 可以在 lockdown 后结束，因此实验不需要 Cordis callback 兼容层。
 
 Host runner 产出的 JavaScript 从 126,601 字节增至 129,812 字节，声明文件从 53,278 字节增至 55,373 字节。精确版本 `ses@2.3.0` 的 npm artifact 压缩后为 1,128,009 字节，解压后为 4,717,114 字节；其三个传递性运行时依赖仍是外部包文件。SES 及其运行时闭包采用 Apache-2.0，并已列入生成的第三方声明。

@@ -2,5 +2,5 @@
 # side as of the last confirmed-consistent state. Both languages carry equal authority;
 # after editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write .agents/notes/implemented/architecture/2026-08-14-experimental-ses-host-evaluator.md
-2026-08-14-experimental-ses-host-evaluator.md: db19847df717776d65d86d4be7d000f3d01f9f0a
-2026-08-14-experimental-ses-host-evaluator.zh.md: af8e490f74405a8a5f243a8ed61ce0742fdda0da
+2026-08-14-experimental-ses-host-evaluator.md: e22b80ffbeeb68f4d100a258327e01b916428492
+2026-08-14-experimental-ses-host-evaluator.zh.md: d182e022d719f50a1e96cbccef1dcf66f0eca128

@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import type { Context, Fiber } from '@deepseek-ai/cordis'
+import type { JsonValue } from '@deepseek-ai/dsh-session/types'
 import type { CordisDynamicPackageId, CordisDynamicPluginId, CordisDynamicPluginRunId } from '../../src/types.ts'
 import {
   AGENT_A,
@@ -11,6 +12,7 @@ import {
   running,
   setup,
   text,
+  VM_POLLUTION_MARKERS,
 } from '../helpers.ts'
 
 type Harness = Awaited<ReturnType<typeof setup>>
@@ -220,6 +222,151 @@ async function securityScenario(): Promise<void> {
     `, 'ctx')
     assert.match(foreign.message, /returned a cordis Context, which the sandbox does not expose/)
     assert.equal(harness.runner.snapshot(AGENT_A).find(row => row.pluginId === foreign.pluginId)?.activeRun, undefined)
+  } finally {
+    await harness.ctx.fiber.dispose()
+  }
+}
+
+/**
+ * Read a marker through an ordinary array value: what any Host code holding an array sees once
+ * something has written to this process's own `Array.prototype`.
+ */
+function hostArrayMarker(name: string): unknown {
+  return ([] as unknown as Record<string, unknown>)[name]
+}
+
+/**
+ * The default evaluator's half of the pair `securityScenario` opens: the same two mutation
+ * attempts a Compartment rejects, measured on `vm`, where an endowed Host function still reaches
+ * the Host realm through its constructor. This scenario owns a process for the same reason the
+ * lockdown scenarios do — the marker it writes on the Host realm's `Array.prototype` is
+ * process-global, and the shared test runner must not inherit it.
+ */
+async function vmPollutionScenario(): Promise<void> {
+  const harness = await setup({ experimentalHostEvaluator: 'vm' })
+  try {
+    const first = await mount(harness, `
+      let intrinsicMutation
+      try {
+        Array.prototype.${VM_POLLUTION_MARKERS.contextRealm} = 'leaked'
+        intrinsicMutation = 'accepted'
+      } catch (error) {
+        intrinsicMutation = error.name
+      }
+      let hostRealm
+      let endowedConstructorEscape
+      try {
+        hostRealm = console.log.constructor('return this')()
+        endowedConstructorEscape = { isSandboxGlobal: hostRealm === globalThis, process: typeof hostRealm.process }
+      } catch (error) {
+        endowedConstructorEscape = error.name + ': ' + error.message
+      }
+      let hostIntrinsicMutation
+      try {
+        hostRealm.Array.prototype.${VM_POLLUTION_MARKERS.hostRealm} = 'leaked'
+        hostIntrinsicMutation = 'accepted'
+      } catch (error) {
+        hostIntrinsicMutation = error.name
+      }
+      harness.handle('pollution', () => ({ intrinsicMutation, endowedConstructorEscape, hostIntrinsicMutation }))
+      return (ctx) => {}
+    `)
+    const firstRun = activeRun(harness, first)
+    assert.deepEqual(await harness.runner.invoke(first, firstRun, 'pollution', null), {
+      ok: true,
+      value: {
+        intrinsicMutation: 'accepted',
+        // A different global object carrying a real `process`: the escape landed outside the sandbox.
+        endowedConstructorEscape: { isSandboxGlobal: false, process: 'object' },
+        hostIntrinsicMutation: 'accepted',
+      },
+    })
+    assert.equal(hostArrayMarker(VM_POLLUTION_MARKERS.hostRealm), 'leaked')
+    assert.equal(hostArrayMarker(VM_POLLUTION_MARKERS.contextRealm), undefined)
+
+    // Unload the package through the runner's own verbs and let it report the result: nothing is
+    // left running, nothing is left defined, and the run that mutated the Host realm is gone.
+    assert.deepEqual(await harness.runner.stop(AGENT_A, first), { ok: true })
+    assert.deepEqual(await harness.runner.undefine(AGENT_A, first), { ok: true, wasRunning: false })
+    assert.deepEqual(harness.runner.inventory(), [])
+    assert.deepEqual(harness.runner.snapshot(AGENT_A), [])
+    assert.deepEqual(await harness.runner.invoke(first, firstRun, 'pollution', null), {
+      ok: false,
+      code: 'plugin-not-running',
+      message: `dynamic plugin "${first}" is not running`,
+    })
+
+    // The measurement: a clean unload does not undo the mutation, because the mutation was never
+    // an effect the fiber owned.
+    assert.equal(hostArrayMarker(VM_POLLUTION_MARKERS.hostRealm), 'leaked')
+
+    const second = await mount(harness, `
+      const marker = (value) => value === undefined ? 'absent' : value
+      const hostRealm = console.log.constructor('return this')()
+      harness.handle('observe', (args) => ({
+        hostMarkerInOwnRealm: marker(Array.prototype.${VM_POLLUTION_MARKERS.hostRealm}),
+        contextMarkerInOwnRealm: marker(Array.prototype.${VM_POLLUTION_MARKERS.contextRealm}),
+        hostMarkerOnHostArgument: marker(args.items.${VM_POLLUTION_MARKERS.hostRealm}),
+        hostMarkerViaOwnEscape: marker(hostRealm.Array.prototype.${VM_POLLUTION_MARKERS.hostRealm}),
+        contextMarkerViaOwnEscape: marker(hostRealm.Array.prototype.${VM_POLLUTION_MARKERS.contextRealm}),
+      }))
+      return (ctx) => {}
+    `)
+    assert.deepEqual(await harness.runner.invoke(second, activeRun(harness, second), 'observe', { items: ['a'] }), {
+      ok: true,
+      value: {
+        // Each package is evaluated in its own `createSandbox` context, so the first package's
+        // write to its own realm reached neither this realm nor the Host realm behind it.
+        hostMarkerInOwnRealm: 'absent',
+        contextMarkerInOwnRealm: 'absent',
+        contextMarkerViaOwnEscape: 'absent',
+        // The Host-realm write reaches a package that never escaped, through an ordinary Host
+        // array handed to it as an argument.
+        hostMarkerOnHostArgument: 'leaked',
+        hostMarkerViaOwnEscape: 'leaked',
+      },
+    })
+  } finally {
+    await harness.ctx.fiber.dispose()
+  }
+}
+
+/**
+ * Where Host-provided arguments sit on both evaluators. SES hardens the endowments a package
+ * receives and the Plugin it returns; neither evaluator copies or freezes the argument a Host
+ * caller passes to `harness.handle`, so the callee mutates the caller's own value. This measures
+ * that boundary rather than moving it.
+ * @param evaluator - which Host evaluator the harness runs the probe on.
+ */
+async function argumentMutationScenario(evaluator: 'vm' | 'ses'): Promise<void> {
+  const harness = await setup({ experimentalHostEvaluator: evaluator })
+  try {
+    const args: Record<string, JsonValue> = { items: ['host'] }
+    const mutator = await mount(harness, `
+      harness.handle('mutate', (args) => {
+        let arrayPush
+        try {
+          args.items.push('from-package')
+          arrayPush = 'accepted'
+        } catch (error) {
+          arrayPush = error.name
+        }
+        let propertyAdd
+        try {
+          args.added = 'from-package'
+          propertyAdd = 'accepted'
+        } catch (error) {
+          propertyAdd = error.name
+        }
+        return { arrayPush, propertyAdd, frozen: Object.isFrozen(args) }
+      })
+      return (ctx) => {}
+    `)
+    assert.deepEqual(await harness.runner.invoke(mutator, activeRun(harness, mutator), 'mutate', args), {
+      ok: true,
+      value: { arrayPush: 'accepted', propertyAdd: 'accepted', frozen: false },
+    })
+    assert.deepEqual(args, { items: ['host', 'from-package'], added: 'from-package' })
   } finally {
     await harness.ctx.fiber.dispose()
   }
@@ -462,9 +609,12 @@ async function identityScenario(): Promise<void> {
 
 const scenarios: Record<string, () => Promise<void>> = {
   security: securityScenario,
+  'vm-pollution': vmPollutionScenario,
   compatibility: compatibilityScenario,
   failure: failureScenario,
   identity: identityScenario,
+  'vm-arguments': () => argumentMutationScenario('vm'),
+  'ses-arguments': () => argumentMutationScenario('ses'),
 }
 
 const scenario = scenarios[process.argv[2] ?? '']

@@ -236,6 +236,18 @@ export const CONSUMER_CODE = `
   }
 `
 
+/**
+ * The two marker names the default-evaluator pollution scenario writes: one on its own sandbox
+ * realm's `Array.prototype`, one on the Host realm's through an endowed-function constructor
+ * escape. The spec that spawns that scenario reads both back to prove the subprocess isolation it
+ * relies on, so the names have one home — a drifted copy would turn that check into a pass that
+ * measures nothing.
+ */
+export const VM_POLLUTION_MARKERS = {
+  contextRealm: '__vmContextRealmLeak',
+  hostRealm: '__vmHostRealmLeak',
+} as const
+
 /** A registrable no-op tool the tests use as a schema-view target. */
 export function dummyTool(name: string): ToolDefinition {
   return {
