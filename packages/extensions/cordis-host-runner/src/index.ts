@@ -899,16 +899,19 @@ export class DynamicCordisRunnerService extends TypertRemoteService {
       return dispose
     }
     try {
+      let evaluated: unknown
       /* v8 ignore start -- real SES evaluation runs in an isolated subprocess because lockdown is process-global. */
-      const evaluated = this.resolved.experimentalHostEvaluator === 'ses'
-        ? await evaluateSesHostCode(hostCode, run.packageId, plugin.pluginId, { handle })
-        : await evaluateHostCode(
+      if (this.resolved.experimentalHostEvaluator === 'ses') {
+        evaluated = await evaluateSesHostCode(hostCode, run.packageId, plugin.pluginId, { handle })
+        /* v8 ignore stop */
+      } else {
+        evaluated = await evaluateHostCode(
           createSandbox(plugin.pluginId, { handle }),
           hostCode,
           plugin.pluginId,
           this.resolved.vmTimeoutMs,
         )
-      /* v8 ignore stop */
+      }
       if (!isPlugin(evaluated)) {
         throw new Error(evaluated === undefined
           ? 'the Host half returned `undefined` — did you forget `return`?'

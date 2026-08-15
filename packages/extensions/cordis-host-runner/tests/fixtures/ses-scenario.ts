@@ -354,6 +354,18 @@ async function failureScenario(): Promise<void> {
       message: `dynamic plugin "${evaluation.pluginId}" is not running`,
     })
 
+    const asyncMarker = await failedRun(harness, `
+      harness.handle('async-marker-leak', () => null)
+      await Promise.resolve()
+      throw new Error('async Host rejection (SES_IMPORT_REJECTED)')
+    `, 'async')
+    assert.equal(asyncMarker.message, 'async Host rejection (SES_IMPORT_REJECTED)')
+    assert.deepEqual(await harness.runner.invoke(asyncMarker.pluginId, asyncMarker.pluginRunId, 'async-marker-leak', null), {
+      ok: false,
+      code: 'plugin-not-running',
+      message: `dynamic plugin "${asyncMarker.pluginId}" is not running`,
+    })
+
     const activation = await failedRun(harness, `
       harness.handle('activation-leak', () => null)
       return {
@@ -385,7 +397,7 @@ async function failureScenario(): Promise<void> {
       code: 'plugin-not-running',
       message: `dynamic plugin "${activation.pluginId}" is not running`,
     })
-    for (const pluginId of [evaluation.pluginId, activation.pluginId]) {
+    for (const pluginId of [evaluation.pluginId, asyncMarker.pluginId, activation.pluginId]) {
       const row = harness.runner.snapshot(AGENT_A).find(candidate => candidate.pluginId === pluginId)
       assert.equal(row?.activeRun, undefined)
     }

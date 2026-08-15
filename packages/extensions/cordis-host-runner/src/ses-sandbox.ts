@@ -81,11 +81,13 @@ export async function evaluateSesHostCode(
     globals: hostEndowments(pluginId, harnessExtras),
     __options__: true,
   })
+  let evaluated: unknown
   try {
-    return await compartment.evaluate(`(async () => {\n${code}\n})()\n//# sourceURL=cordis-dyn-${packageId}.js`)
+    evaluated = compartment.evaluate(`(async () => {\n${code}\n})()\n//# sourceURL=cordis-dyn-${packageId}.js`)
   } catch (error) {
     throw sesSourceRejection(error) ?? error
   }
+  return await evaluated
 }
 
 /**
